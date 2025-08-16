@@ -2,15 +2,15 @@ const express = require('express');
 const admin = require('firebase-admin');
 const cors = require('cors');
 
-// Initialize Express app
+
 const app = express();
 
-// Middleware
+
 app.use(cors());
 app.use(express.json());
 
-// Initialize Firebase Admin SDK
-const serviceAccount = require('./firebaseServicekey.json'); // Update this path
+
+const serviceAccount = require('./firebaseServicekey.json'); 
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -18,10 +18,10 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// Helper function to fetch user data with groups
+
 async function fetchUserWithGroups(userId) {
   try {
-    // Fetch user document
+   
     const userDoc = await db.collection('users').doc(userId).get();
     
     if (!userDoc.exists) {
@@ -30,8 +30,7 @@ async function fetchUserWithGroups(userId) {
 
     const userData = userDoc.data();
     
-    // Fetch group details for each group in user's group array
-    // Group name is the document ID in the groups collection
+    
     const groupPromises = userData.group.map(async (groupName) => {
       try {
         const groupDoc = await db.collection('groups').doc(groupName).get();
@@ -129,7 +128,7 @@ app.listen(PORT, () => {
   console.log(`🔍 Health Check: http://localhost:${PORT}/health`);
 });
 
-// Graceful shutdown
+
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
   process.exit(0);
