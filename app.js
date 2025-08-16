@@ -123,9 +123,9 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 API Server running on port ${PORT}`);
-  console.log(`📡 API Endpoint: http://localhost:${PORT}/api/user/{userId}`);
-  console.log(`🔍 Health Check: http://localhost:${PORT}/health`);
+  console.log(` API Server running on port ${PORT}`);
+  console.log(` API Endpoint: http://localhost:${PORT}/api/user/{userId}`);
+  console.log(` Health Check: http://localhost:${PORT}/health`);
 });
 
 
