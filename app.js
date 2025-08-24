@@ -7,7 +7,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const serviceAccount = require('./firebaseServicekey.json'); 
+
+   const serviceAccount = require('./firebaseServicekey.json');
+
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount)
@@ -15,7 +17,7 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// Store active SSE connections
+// Store active SSE connections (will reset on each deployment)
 const activeConnections = new Map();
 
 async function fetchUserWithGroups(userId) {
@@ -108,7 +110,7 @@ function setupRealtimeListeners(userId, res) {
       
       return groupRef.onSnapshot(async (doc) => {
         try {
-          console.log(` Group ${groupName} changed, sending update for user ${userId}...`);
+          console.log(`Group ${groupName} changed, sending update for user ${userId}...`);
           const result = await fetchUserWithGroups(userId);
           
           // Send SSE update
@@ -142,7 +144,7 @@ function setupRealtimeListeners(userId, res) {
 
     // Clean up when connection closes
     res.on('close', () => {
-      console.log(` SSE connection closed for user ${userId}`);
+      console.log(`SSE connection closed for user ${userId}`);
       const connection = activeConnections.get(connectionId);
       if (connection) {
         connection.userUnsubscribe();
@@ -153,7 +155,7 @@ function setupRealtimeListeners(userId, res) {
   });
 }
 
-// REST API: Get user data (one-time)
+// REST API: Get user data (one-time) - MAIN ENDPOINT FOR RENDER
 app.get('/api/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -174,7 +176,35 @@ app.get('/api/user/:userId', async (req, res) => {
   }
 });
 
-// SSE API: Real-time updates using Server-Sent Events
+// POLLING endpoint for pseudo-realtime (Render-friendly alternative)
+app.get('/api/user/:userId/poll', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { lastUpdated } = req.query;
+    
+    console.log(`Polling request for user ID: ${userId}, lastUpdated: ${lastUpdated}`);
+    
+    const result = await fetchUserWithGroups(userId);
+    
+    // Add polling-friendly metadata
+    res.json({
+      ...result,
+      serverTime: new Date().toISOString(),
+      pollInterval: 5000, // Suggest 5-second polling
+      isNewData: !lastUpdated || new Date(result.timestamp) > new Date(lastUpdated)
+    });
+    
+  } catch (error) {
+    console.error('Polling API Error:', error);
+    res.status(404).json({ 
+      success: false,
+      error: error.message || 'User not found',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// SSE API: Real-time updates (LIMITED ON RENDER FREE)
 app.get('/api/user/:userId/realtime', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -197,26 +227,27 @@ app.get('/api/user/:userId/realtime', async (req, res) => {
       data: initialData
     })}\n\n`);
 
-    // Send connection confirmation
+    // Send connection confirmation with warning about Render limitations
     res.write(`data: ${JSON.stringify({
       type: 'connected',
-      message: 'Real-time connection established',
+      message: 'Real-time connection established (Note: May disconnect after 15 minutes on free tier)',
       userId: userId,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      warning: 'For reliable updates, consider using polling endpoint /api/user/{userId}/poll'
     })}\n\n`);
 
     // Setup real-time listeners
     setupRealtimeListeners(userId, res);
 
-    // Keep connection alive with heartbeat
+    // REDUCED heartbeat - every 5 minutes instead of 30 seconds
     const heartbeatInterval = setInterval(() => {
       res.write(`data: ${JSON.stringify({
         type: 'heartbeat',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
       })}\n\n`);
-    }, 30000); // Every 30 seconds
+    }, 300000); // Every 5 minutes
 
-  
     res.on('close', () => {
       clearInterval(heartbeatInterval);
     });
@@ -231,6 +262,15 @@ app.get('/api/user/:userId/realtime', async (req, res) => {
   }
 });
 
+// Keep-alive endpoint to prevent sleeping (call this from frontend every 10 minutes)
+app.get('/api/keep-alive', (req, res) => {
+  res.json({ 
+    status: 'alive',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    message: 'Server is awake'
+  });
+});
 
 app.get('/api/connections', (req, res) => {
   const connections = Array.from(activeConnections.entries()).map(([id, conn]) => ({
@@ -247,7 +287,6 @@ app.get('/api/connections', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
-
 
 app.delete('/api/connection/:userId', (req, res) => {
   const { userId } = req.params;
@@ -274,27 +313,50 @@ app.delete('/api/connection/:userId', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK',
-    service: 'Mobile Real-time User Data API',
+    service: 'Mobile Real-time User Data API (Render Optimized)',
     activeConnections: activeConnections.size,
     uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString() 
   });
 });
 
-
 app.get('/', (req, res) => {
   res.json({
-    message: ' Real-time User Data API',
+    message: 'Real-time User Data API (Render Free Tier Optimized)',
+    deployment: {
+      platform: 'Render Free Tier',
+      limitations: [
+        'Apps sleep after 15 minutes of inactivity',
+        'Cold starts take 30+ seconds',
+        'SSE connections break when app sleeps'
+      ],
+      recommendations: [
+        'Use polling endpoint for reliable updates',
+        'Call keep-alive endpoint every 10 minutes',
+        'Implement reconnection logic in frontend'
+      ]
+    },
     endpoints: {
       oneTimeUserData: {
         method: 'GET',
         url: '/api/user/{userId}',
-        description: 'Get user data once (REST API)'
+        description: 'Get user data once (REST API) - RECOMMENDED FOR RENDER'
+      },
+      pollingUserData: {
+        method: 'GET',
+        url: '/api/user/{userId}/poll?lastUpdated={timestamp}',
+        description: 'Get user data with polling support - RENDER FRIENDLY'
       },
       realtimeUserData: {
         method: 'GET',
         url: '/api/user/{userId}/realtime',
-        description: 'Get user data with real-time updates (SSE)'
+        description: 'Get user data with real-time updates (SSE) - LIMITED ON RENDER FREE'
+      },
+      keepAlive: {
+        method: 'GET',
+        url: '/api/keep-alive',
+        description: 'Keep server awake (call every 10 minutes from frontend)'
       },
       connections: {
         method: 'GET',
@@ -313,23 +375,26 @@ app.get('/', (req, res) => {
       }
     },
     usage: {
-      oneTime: 'Use /api/user/{userId} for single requests',
-      realtime: 'Use /api/user/{userId}/realtime for real-time updates via Server-Sent Events'
+      recommended: 'Use /api/user/{userId}/poll for pseudo-realtime updates',
+      alternative: 'Use /api/user/{userId} for one-time requests',
+      realtime: 'Use /api/user/{userId}/realtime with caution (may disconnect)'
     },
     activeConnections: activeConnections.size,
     timestamp: new Date().toISOString()
   });
 });
 
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(` Mobile Real-time API Server running on port ${PORT}`);
-  console.log(` One-time API: http://localhost:${PORT}/api/user/{userId}`);
-  console.log(` Real-time API: http://localhost:${PORT}/api/user/{userId}/realtime`);
-  console.log(` Health Check: http://localhost:${PORT}/health`);
+  console.log(`Mobile Real-time API Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Platform: ${process.env.RENDER ? 'Render' : 'Local'}`);
+  console.log(`One-time API: /api/user/{userId}`);
+  console.log(`Polling API: /api/user/{userId}/poll`);
+  console.log(`Real-time API: /api/user/{userId}/realtime`);
+  console.log(`Keep-alive: /api/keep-alive`);
+  console.log(`Health Check: /health`);
 });
-
 
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
